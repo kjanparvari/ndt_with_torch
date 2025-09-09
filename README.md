@@ -42,13 +42,13 @@ The implementation has been tested on the **[KITTI Odometry dataset](http://www.
 ## 📊 Results
 
 ### Before Registration
-![Before Registration](images/before.png)
+<img src="images/before.png" alt="Before Registration" width="400"/>
 
 ### After Registration
-![After Registration](images/after.png)
+<img src="images/after.png" alt="After Registration" width="400"/>
 
 ### Built Gaussian Components
-![Gaussian Components](images/gaussians.png)
+<img src="images/gaussians.png" alt="Gaussian Components" width="400"/>
 
 ---
 
