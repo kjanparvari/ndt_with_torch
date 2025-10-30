@@ -1,0 +1,59 @@
+# map optimization
+means_lr: 1.0e-2
+weights_lr: 1.0e-3
+scales_lr: 1.0e-2
+rots_lr: 1.0e-2
+# means_lr: 3.0e-4
+# weights_lr: 0.0      # until weights affect the PCL score
+# scales_lr: 1.0e-3
+# rots_lr: 5.0e-4
+
+# pose optimization
+train_pose_solver: "pcl_torch" # "pcl_torch" or "adam_higher"
+#translation_lr: 0.006
+#rotation_lr: 0.008
+translation_lr: 0.01
+rotation_lr: 0.003
+
+# PCL-style Torch NDT pose optimization
+pcl_step_size: 1.5
+pcl_transformation_epsilon: 1.0e-5
+pcl_outlier_ratio: 0.55
+pcl_line_search_max_steps: 10
+pcl_radius_chunk_size: 1024
+
+# Map / pose optimization loops
+outer_rounds: 100000
+pose_iters: 70
+evaluation_rounds: 50
+use_soft_nll: true
+n_neighbours: 9
+source_downsample_voxel: .2
+
+# Map construction
+map_start_frame: 60
+map_end_frame: 120
+voxel_size: 2. # modify covs_jitter too
+map_downsample_voxel: 0.25
+min_points_per_voxel: 6
+covs_jitter: 0.0001
+
+# Noise
+# noise_tr_xy: .8
+# noise_tr_z: .2
+# noise_yaw: 8.
+# noise_roll_pitch: 2.
+noise_tr_xy: 1.5
+noise_tr_z: .4
+noise_yaw: 12.
+noise_roll_pitch: 4.
+
+
+# Logging / dirs
+kitti_root: "./kitti/"
+# kitti_root: "/public/Ehsan/datasets/odometry/kitti/dataset/"
+kitti_sequence: "01"
+checkpoints_parent_dir: "checkpoints"
+verbose: true
+device: "cuda"   # or "cpu"
+dtype: "float32"
