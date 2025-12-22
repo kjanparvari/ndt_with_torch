@@ -84,7 +84,6 @@ class KittiOdometryDataset:
         self.poses_in_lidar[:, :3, :4] = self.poses
 
         initial_pose = np.vstack((self.poses[0], [0, 0, 0, 1]))
-
         for i in range(self.poses.shape[0]):
             self.poses_in_lidar[i] = np.linalg.inv(self.velo2cam) @ \
                                      np.linalg.inv(initial_pose) @ \
@@ -97,11 +96,13 @@ class KittiOdometryDataset:
         with open(timestamp_file, 'r', encoding='utf-8') as f:
             self.timestamps = f.readlines()
 
-    def get_lidar_data(self, frame, coordinate_system='lidar', drop_intensity=True):
+
+    def get_lidar_data(self, frame, coordinate_system='lidar', drop_intensity=True, return_pose=False):
         """
         Get LIDAR data for a specific frame in the current sequence.
 
         Args:
+            return_pose (bool): Whether to return the poses.
             frame (int): Frame number.
             coordinate_system (str): Coordinate system to return the data in.
         Returns:
@@ -115,13 +116,16 @@ class KittiOdometryDataset:
         lidar_filename = os.path.join(self.data_path, 'sequences', self.current_sequence,
                                       'velodyne', f'{frame:06d}.bin')
         result = None
+        pose = self.poses_in_lidar[frame]
         if coordinate_system == 'lidar':
             result = self._load_lidar_data(lidar_filename)
         elif coordinate_system == 'world':
-            result = transform_points(self._load_lidar_data(lidar_filename), self.poses_in_lidar[frame])
+            result = transform_points(self._load_lidar_data(lidar_filename), pose)
         else:
             raise ValueError(f"Invalid coordinate system: {coordinate_system}")
-        return result if not drop_intensity else result[:, :3]
+        if drop_intensity:
+            result = result[:, :3]
+        return result if not return_pose else (result, pose)
 
     def _load_lidar_data(self, filename):
         """

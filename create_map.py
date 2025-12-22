@@ -1,10 +1,12 @@
 import numpy as np
+import torch
 from matplotlib import pyplot as plt
 from kitti_dataset import KittiOdometryDataset
 import open3d as o3d
 import os
 
-def create_velodyne_map(dataset, start_frame, end_frame, downsample_factor=10):
+
+def create_velodyne_map(dataset, start_frame, end_frame, map_downsample_voxel=10):
     """
     Create a Velodyne map for the given sequence.
     
@@ -23,9 +25,15 @@ def create_velodyne_map(dataset, start_frame, end_frame, downsample_factor=10):
         # Get LIDAR data and pose
         lidar_data = dataset.get_lidar_data(frame, coordinate_system='world')
         # Downsample points
-        lidar_data = lidar_data[::downsample_factor]
+        # down_np = lidar_data[::downsample_factor]
 
-        accumulated_points.append(lidar_data)
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(lidar_data)
+        # downsampled_pcd = pcd.farthest_point_down_sample(num_samples=lidar_data.shape[0] // downsample_factor)
+        downsampled_pcd = pcd.voxel_down_sample(voxel_size=map_downsample_voxel)
+        down_np = np.asarray(downsampled_pcd.points)
+
+        accumulated_points.append(down_np)
 
     _map = np.vstack(accumulated_points)
     return _map
@@ -36,68 +44,35 @@ def subsample_map(points, voxel_size=0.5):
     Subsample the map using voxel grid downsampling.
     
     Args:
-    points (np.array): Nx3 array of points
+    points (torch.Tensor): Nx3 tensor of points
     voxel_size (float): Size of voxel grid for downsampling
     
     Returns:
-    np.array: Downsampled points
+    torch.Tensor: Downsampled points
     """
+    if not isinstance(points, torch.Tensor):
+        raise TypeError('points must be a torch.Tensor')
+    points_np = points.detach().cpu().numpy()
     pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(points)
-    downsampled_pcd = pcd.voxel_down_sample(voxel_size=voxel_size)
-    return np.asarray(downsampled_pcd.points)
+    pcd.points = o3d.utility.Vector3dVector(points_np)
+    # downsampled_pcd = pcd.voxel_down_sample(voxel_size=voxel_size)
+    downsampled_pcd = pcd.farthest_point_down_sample(num_samples=points_np.shape[0]//3)
+    down_np = np.asarray(downsampled_pcd.points)
+    return torch.from_numpy(down_np).to(dtype=points.dtype, device=points.device)
 
 
-def apply_random_transform(points, max_translation=2.0, max_rotation_deg=5.0, seed=0):
-    """
-    Apply a random rigid transform to a point cloud.
-
-    Args:
-    - points (np.ndarray): Nx3 point cloud
-    - max_translation (float): Max translation in meters
-    - max_rotation_deg (float): Max rotation in degrees
-
-    Returns:
-    - transformed_points (np.ndarray): Transformed Nx3 point cloud
-    """
-    # Create a seeded Generator instance
-    rnd_gen = np.random.default_rng(seed)
-
-    # Random translation vector in range [-max_translation, max_translation]
-    translation = rnd_gen.uniform(-max_translation, max_translation, size=(3,))
-
-    # Random small rotation in degrees
-    angles = np.radians(rnd_gen.uniform(-max_rotation_deg, max_rotation_deg, size=(3,)))
-
-    # Rotation matrices around x, y, z axes
-    Rx = np.array([
-        [1, 0, 0],
-        [0, np.cos(angles[0]), -np.sin(angles[0])],
-        [0, np.sin(angles[0]), np.cos(angles[0])]
-    ])
-    Ry = np.array([
-        [np.cos(angles[1]), 0, np.sin(angles[1])],
-        [0, 1, 0],
-        [-np.sin(angles[1]), 0, np.cos(angles[1])]
-    ])
-    Rz = np.array([
-        [np.cos(angles[2]), -np.sin(angles[2]), 0],
-        [np.sin(angles[2]), np.cos(angles[2]), 0],
-        [0, 0, 1]
-    ])
-
-    # Compose full rotation matrix
-    R = Rz @ Ry @ Rx
-    # R = Rz
-
-    # translation[2] = 0.
-    # Apply transform
-    transformed_points = (R @ points.T).T + translation
-
-    print(f"Initial translation: {translation}")
-    print(f"Initial rotation: {angles}")
-
-    return transformed_points, R, translation
+def crop_middle_box(points: torch.Tensor, keep_ratio: float = 0.5) -> torch.Tensor:
+    if not isinstance(points, torch.Tensor):
+        raise TypeError('points must be a torch.Tensor')
+    # keep_ratio in (0,1]; 0.5 keeps the central 50% along each axis
+    mins, _ = points.min(dim=0)
+    maxs, _ = points.max(dim=0)
+    span = maxs - mins
+    mid = (maxs + mins) * 0.5
+    half = span * (keep_ratio * 0.5)
+    lo, hi = mid - half, mid + half
+    m = ((points >= lo) & (points <= hi)).all(dim=-1)
+    return points[m]
 
 
 def plot_map_2d(points, source_points=None):
