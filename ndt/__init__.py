@@ -1,11 +1,24 @@
 from .kdtree import KDTree
-from .se3 import se3_exp, se3_transform_points
-from .ndt import NDTModel, NDTRegistration
+from .utils import (
+    inverse_composition_pose_errors,
+    inverse_composition_se3_log_mse,
+    sample_random_se3_transform,
+)
+from .ndt import (
+    NDTModel,
+    NDTCorrectionResidualModule,
+    SE3CorrectionModule,
+)
+from .pcl_torch_ndt import DifferentiablePCLTorchNDTAligner, PCLTorchNDTAligner
 
 __all__ = [
     "KDTree",
-    "se3_exp",
-    "se3_transform_points",
+    "sample_random_se3_transform",
+    "inverse_composition_se3_log_mse",
     "NDTModel",
-    "NDTRegistration",
+    "SE3CorrectionModule",
+    "NDTCorrectionResidualModule",
+    "PCLTorchNDTAligner",
+    "DifferentiablePCLTorchNDTAligner",
+    "inverse_composition_pose_errors",
 ]
