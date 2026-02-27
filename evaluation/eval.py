@@ -22,7 +22,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from kitti_dataset import KittiOdometryDataset
 from configs.config import load_config_file
-from metandt.utils import (
+from ndt.utils import (
     inverse_composition_pose_errors,
     sample_random_se3_transform,
     inverse_composition_se3_log_mse,
@@ -262,7 +262,7 @@ def evaluate_benchmark_cases(
     return {"summary": summary, "rows": rows}
 
 
-def evaluate_metandt_random_cases(
+def evaluate_ndt_random_cases(
     model: Any,
     tests_number: int = 20,
     writer: Optional[SummaryWriter] = None,
@@ -305,7 +305,7 @@ def evaluate_metandt_random_cases(
     return mean_loss
 
 
-def _metandt_alignment_functions(
+def _ndt_alignment_functions(
     model: Any,
     aligner: str,
 ) -> dict[
@@ -357,7 +357,7 @@ def _metandt_alignment_functions(
     return {"adam": align_pose_adam, "lm": align_pose_lm}
 
 
-def evaluate_metandt_benchmark(
+def evaluate_ndt_benchmark(
     model: Any,
     benchmark_path: str = "evaluation/benchmark.yaml",
     writer: Optional[SummaryWriter] = None,
@@ -370,10 +370,10 @@ def evaluate_metandt_benchmark(
     if isinstance(benchmark_path, str):
         benchmark_path = Path(benchmark_path)
     print(
-        f"[eval] evaluating MetaNDT on benchmark {benchmark_path} with aligner {aligner}..."
+        f"[eval] evaluating NDTModel on benchmark {benchmark_path} with aligner {aligner}..."
     )
     _, cases = _load_benchmark(benchmark_path)
-    align_fns = _metandt_alignment_functions(model, aligner)
+    align_fns = _ndt_alignment_functions(model, aligner)
 
     def plot_initial_case(
         _case: BenchmarkCase,
@@ -467,22 +467,17 @@ def evaluate_metandt_benchmark(
     return summary
 
 
-def _build_metandt(
+def _build_ndt_model(
     *,
-    checkpoint: str | None,
-    from_latest: bool,
+    saved_map: str | None,
 ) -> Any:
-    from metandt import MetaNDT
+    from ndt import NDTModel
 
-    model = MetaNDT()
-    if (checkpoint is not None) and not from_latest:
-        model.load_checkpoint(checkpoint)
-    elif (checkpoint is None) and from_latest:
-        model.load_latest_checkpoint()
-    elif (checkpoint is None) and not from_latest:
-        model.build_gaussian_map()
+    model = NDTModel()
+    if saved_map is not None:
+        model.load_saved_map(saved_map)
     else:
-        raise ValueError("from_latest and checkpoint cannot be set simultaneously!")
+        model.build_gaussian_map()
     return model
 
 
@@ -495,13 +490,12 @@ def _run_cli() -> None:
     )
     parser.add_argument("--output-json", type=Path, default=None)
 
-    parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--from-latest", action="store_true")
+    parser.add_argument("--saved-map", type=str, default=None)
     parser.add_argument(
         "--aligner",
         choices=["adam", "lm", "pcl_torch", "both", "all"],
         default="adam",
-        help="MetaNDT aligner to evaluate.",
+        help="NDT aligner to evaluate.",
     )
 
     args = parser.parse_args()
@@ -514,11 +508,10 @@ def _run_cli() -> None:
 
     source_downsample_voxel = config.get("source_downsample_voxel", 0.2)
 
-    model = _build_metandt(
-        checkpoint=args.checkpoint,
-        from_latest=args.from_latest,
+    model = _build_ndt_model(
+        saved_map=args.saved_map,
     )
-    selected_align_fns = _metandt_alignment_functions(model, args.aligner)
+    selected_align_fns = _ndt_alignment_functions(model, args.aligner)
     if len(selected_align_fns) == 1:
         eval_align_fn = next(iter(selected_align_fns.values()))
         eval_align_fns = None
@@ -541,7 +534,7 @@ def _run_cli() -> None:
         with args.output_json.open("w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "model": "metandt",
+                    "model": "ndt",
                     "aligner": args.aligner,
                     "benchmark": str(args.benchmark),
                     "sequence": sequence,

@@ -12,18 +12,6 @@ class PCLNDTScoreDerivatives:
     score: torch.Tensor
     gradient: torch.Tensor
     hessian: torch.Tensor | None
-    used_gaussian_idxs: torch.Tensor | None = None
-
-
-@dataclass(frozen=True)
-class DifferentiablePCLNDTAlignment:
-    T_world_from_lidar_pred: pp.LieTensor
-    T_lidar_perturb_inv_pred: pp.LieTensor
-    source_points_in_world_pred: torch.Tensor
-    used_gaussian_idxs: torch.Tensor
-    last_score: torch.Tensor
-    score_history: tuple[torch.Tensor, ...]
-    pose_vec_history: tuple[torch.Tensor, ...]
 
 
 def pcl_pose_vec_to_matrix(pcl_pose_vec: torch.Tensor) -> torch.Tensor:
@@ -260,21 +248,10 @@ class PCLTorchNDTAligner:
         pcl_pose_vec: torch.Tensor,
         *,
         compute_hessian: bool,
-        keep_pose_graph: bool = False,
-        detach_map: bool = True,
-        detach_source: bool = False,
-        detach_outputs: bool = True,
-        create_hessian_graph: bool = False,
     ) -> PCLNDTScoreDerivatives:
-        if keep_pose_graph and pcl_pose_vec.requires_grad:
-            pcl_pose_vec_var = pcl_pose_vec
-        else:
-            pcl_pose_vec_var = pcl_pose_vec.detach().clone().requires_grad_(True)
-
-        if detach_source:
-            source_points_in_lidar = source_points_in_lidar.detach()
-        means = self.means.detach() if detach_map else self.means
-        cov_invs = self.cov_invs.detach() if detach_map else self.cov_invs
+        pcl_pose_vec_var = pcl_pose_vec.detach().clone().requires_grad_(True)
+        means = self.means.detach()
+        cov_invs = self.cov_invs.detach()
 
         T_world_from_lidar_matrix = pcl_pose_vec_to_matrix(pcl_pose_vec_var)
         source_points_in_world = self._transform_points(
@@ -305,20 +282,18 @@ class PCLTorchNDTAligner:
             hessian = self._hessian_from_gradient(
                 gradient,
                 pcl_pose_vec_var,
-                create_graph=create_hessian_graph,
+                create_graph=False,
             )
 
-        if detach_outputs:
-            score = score.detach()
-            gradient = gradient.detach()
-            if hessian is not None:
-                hessian = hessian.detach()
+        score = score.detach()
+        gradient = gradient.detach()
+        if hessian is not None:
+            hessian = hessian.detach()
 
         return PCLNDTScoreDerivatives(
             score=score,
             gradient=gradient,
             hessian=hessian,
-            used_gaussian_idxs=mean_idxs.unique(),
         )
 
     def _score_from_pairs(
@@ -691,223 +666,3 @@ class PCLTorchNDTAligner:
                 and rotation_eps <= 0.0
             )
         )
-
-
-class DifferentiablePCLTorchNDTAligner(PCLTorchNDTAligner):
-    """Unrolled PCL-style NDT optimizer for meta-training.
-
-    Unlike `PCLTorchNDTAligner`, this class keeps `means` and `cov_invs` attached
-    to the map graph and keeps the Newton updates differentiable. Neighbor
-    selection and scalar line-search decisions are still treated as constants.
-    """
-
-    def __init__(
-        self,
-        *,
-        means: torch.Tensor,
-        cov_invs: torch.Tensor,
-        weights: torch.Tensor | None = None,
-        resolution: float,
-        max_iterations: int,
-        step_size: float = 1.5,
-        transformation_epsilon: float = 1.0e-4,
-        transformation_rotation_epsilon: float = 0.0,
-        outlier_ratio: float = 0.55,
-        line_search_max_steps: int = 10,
-        radius_chunk_size: int = 1024,
-        verbose: bool = False,
-        debug_map_params: dict[str, torch.Tensor] | None = None,
-    ):
-        super().__init__(
-            means=means,
-            cov_invs=cov_invs,
-            weights=weights,
-            resolution=resolution,
-            max_iterations=max_iterations,
-            step_size=step_size,
-            transformation_epsilon=transformation_epsilon,
-            transformation_rotation_epsilon=transformation_rotation_epsilon,
-            outlier_ratio=outlier_ratio,
-            line_search_max_steps=line_search_max_steps,
-            radius_chunk_size=radius_chunk_size,
-            verbose=verbose,
-        )
-        self.means = means
-        self.cov_invs = cov_invs
-        self.weights = weights
-        self.debug_map_params = debug_map_params
-
-    def align(
-        self,
-        source_points_in_lidar: torch.Tensor,
-        T_world_from_lidar_init: pp.LieTensor,
-    ) -> DifferentiablePCLNDTAlignment:
-        source_points_in_lidar, T_world_from_lidar_init, pcl_pose_vec = (
-            self._prepare_alignment_inputs(
-                source_points_in_lidar, T_world_from_lidar_init
-            )
-        )
-
-        used_gaussian_idxs = torch.empty(0, device=self.means.device, dtype=torch.long)
-        score_history: list[torch.Tensor] = []
-        pose_vec_history: list[torch.Tensor] = []
-
-        for iteration in range(self.max_iterations):
-            derivs = self._score_derivatives(
-                source_points_in_lidar, pcl_pose_vec, compute_hessian=True
-            )
-            # self._print_debug_map_grads(iteration, derivs.score)
-            score_history.append(derivs.score.detach())
-            if derivs.used_gaussian_idxs is not None:
-                used_gaussian_idxs = torch.cat(
-                    [used_gaussian_idxs, derivs.used_gaussian_idxs]
-                ).unique()
-
-            pcl_pose_delta_vec = self._newton_delta(derivs.gradient, derivs.hessian)
-            pcl_pose_delta_norm = torch.linalg.norm(pcl_pose_delta_vec)
-            delta_norm_value = float(pcl_pose_delta_norm.detach().item())
-            if not math.isfinite(delta_norm_value) or delta_norm_value == 0.0:
-                break
-
-            eps = torch.finfo(pcl_pose_delta_vec.dtype).eps
-            step_dir = pcl_pose_delta_vec / pcl_pose_delta_norm.clamp_min(eps)
-            step_len, direction_sign = self._line_search_step_constants(
-                source_points_in_lidar=source_points_in_lidar,
-                pcl_pose_vec=pcl_pose_vec,
-                step_dir=step_dir,
-                step_init=delta_norm_value,
-                current_score=derivs.score,
-                current_gradient=derivs.gradient,
-            )
-            pcl_pose_delta_vec = step_dir * (direction_sign * step_len)
-            pcl_pose_vec = pcl_pose_vec + pcl_pose_delta_vec
-            pose_vec_history.append(pcl_pose_vec)
-
-            if self.verbose:
-                print(
-                    f"[diff_pcl_torch_ndt {iteration}] "
-                    f"score={derivs.score.detach().item():.6f} "
-                    f"step={float(step_len):.6e}"
-                )
-
-            if self._has_converged(pcl_pose_delta_vec):
-                break
-
-        (
-            T_world_from_lidar_pred,
-            T_lidar_perturb_inv_pred,
-            source_points_in_world_pred,
-        ) = self._alignment_result(
-            source_points_in_lidar, T_world_from_lidar_init, pcl_pose_vec
-        )
-
-        if score_history:
-            last_score = score_history[-1]
-        else:
-            last_score = pcl_pose_vec.detach().sum() * 0.0
-
-        return DifferentiablePCLNDTAlignment(
-            T_world_from_lidar_pred=T_world_from_lidar_pred,
-            T_lidar_perturb_inv_pred=T_lidar_perturb_inv_pred,
-            source_points_in_world_pred=source_points_in_world_pred,
-            used_gaussian_idxs=used_gaussian_idxs,
-            last_score=last_score,
-            score_history=tuple(score_history),
-            pose_vec_history=tuple(pose_vec_history),
-        )
-
-    def _print_debug_map_grads(
-        self,
-        iteration: int,
-        score: torch.Tensor,
-    ) -> None:
-        if not self.debug_map_params:
-            return
-
-        names = []
-        tensors = []
-        for name, tensor in self.debug_map_params.items():
-            if tensor is None:
-                continue
-            names.append(name)
-            tensors.append(tensor)
-        if not tensors:
-            return
-
-        grads = torch.autograd.grad(
-            score,
-            tensors,
-            retain_graph=True,
-            allow_unused=True,
-        )
-        parts = []
-        for name, grad in zip(names, grads):
-            if grad is None:
-                parts.append(f"{name}=None")
-            else:
-                grad_detached = grad.detach()
-                parts.append(
-                    f"{name}:norm={grad_detached.norm().item():.3e},"
-                    f"max={grad_detached.abs().max().item():.3e}"
-                )
-        print(
-            f"[debug map grad diff_pcl_torch_ndt {iteration}] "
-            f"score={score.detach().item():.6f} " + " ".join(parts)
-        )
-
-    def _score_derivatives(
-        self,
-        source_points_in_lidar: torch.Tensor,
-        pcl_pose_vec: torch.Tensor,
-        *,
-        compute_hessian: bool,
-    ) -> PCLNDTScoreDerivatives:
-        return super()._score_derivatives(
-            source_points_in_lidar,
-            pcl_pose_vec,
-            compute_hessian=compute_hessian,
-            keep_pose_graph=True,
-            detach_map=False,
-            detach_outputs=False,
-            create_hessian_graph=True,
-        )
-
-    def _score_gradient_detached(
-        self,
-        source_points_in_lidar: torch.Tensor,
-        pcl_pose_vec: torch.Tensor,
-    ) -> PCLNDTScoreDerivatives:
-        return super()._score_derivatives(
-            source_points_in_lidar,
-            pcl_pose_vec,
-            compute_hessian=False,
-            detach_map=True,
-            detach_source=True,
-            detach_outputs=True,
-        )
-
-    def _line_search_step_constants(
-        self,
-        *,
-        source_points_in_lidar: torch.Tensor,
-        pcl_pose_vec: torch.Tensor,
-        step_dir: torch.Tensor,
-        step_init: float,
-        current_score: torch.Tensor,
-        current_gradient: torch.Tensor,
-    ) -> tuple[float, float]:
-        step_dir_detached = step_dir.detach()
-
-        def score_fn(pose_vec: torch.Tensor, *, compute_hessian: bool):
-            return self._score_gradient_detached(source_points_in_lidar, pose_vec)
-
-        step_len, _, direction_sign, _ = self._line_search_core(
-            pcl_pose_vec=pcl_pose_vec.detach(),
-            step_dir=step_dir_detached,
-            step_init=step_init,
-            current_score=current_score.detach(),
-            current_gradient=current_gradient.detach(),
-            score_fn=score_fn,
-            return_accepted=False,
-        )
-        return step_len, direction_sign

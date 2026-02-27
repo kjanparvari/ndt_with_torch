@@ -9,7 +9,7 @@ from .ndt import (
     NDTCorrectionResidualModule,
     SE3CorrectionModule,
 )
-from .pcl_torch_ndt import DifferentiablePCLTorchNDTAligner, PCLTorchNDTAligner
+from .pcl_torch_ndt import PCLTorchNDTAligner
 
 __all__ = [
     "KDTree",
@@ -19,6 +19,5 @@ __all__ = [
     "SE3CorrectionModule",
     "NDTCorrectionResidualModule",
     "PCLTorchNDTAligner",
-    "DifferentiablePCLTorchNDTAligner",
     "inverse_composition_pose_errors",
 ]

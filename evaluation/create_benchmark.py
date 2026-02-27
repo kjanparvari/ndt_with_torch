@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from configs.config import load_config_file as load_config
-from metandt.utils import sample_random_se3_transform
+from ndt.utils import sample_random_se3_transform
 from kitti_dataset import KittiOdometryDataset
 
 
@@ -32,7 +32,6 @@ def create_benchmark(
     max_yaw_deg = float(config.get("noise_yaw", 10.0))
     max_z_translation = float(config.get("noise_tr_z", 0.2))
     max_roll_pitch_deg = float(config.get("noise_roll_pitch", 2.0))
-    num_cases = int(config.get("evaluation_rounds", 50))
     dataset_root = Path(config.get("kitti_root", "./kitti"))
     sequence = str(config.get("kitti_sequence", "01"))
 
@@ -110,7 +109,7 @@ def create_benchmark(
 
 
 def main() -> None:
-    output_path = Path("./evaluation/benchmark-higher.yaml")
+    output_path = Path("./evaluation/benchmark.yaml")
     config_path = Path("./configs/default.yaml")
     benchmark = create_benchmark(
         output=output_path,
